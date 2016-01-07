@@ -2,18 +2,23 @@
 #include "DHT.h"
 
 //WiFi setup
+//replace with your values
+byte ip[]        {192,168,1,14};
+byte dns[]       {192,168,1,1};
+byte gateway[]   {192,168,1,1};
+
+//replace with your values
 #define ssid       "......."
 #define password   "......."
 
 //Thingspeak setup
+//replace with your values
 #define thingspeakApiKey "................"
 #define thingSpeakAddress "api.thingspeak.com"
 #define thingSpeakUpdateJsonEndpoint "/update.json"
 #define thingSpeakHttpPort 80
-//Update data for the specific channel not frequently than 16 sec
-#define thingSpeakUpdateInterval 16000
-//Update data for the specific channel if it's the same not frequently than 5 mins
-#define thingSpeakUpdateSameDataInterval 300000 //5 min
+//Update data for the specific channel not frequently than 30 sec
+#define thingSpeakUpdateInterval 50000000
 
 //DHT22
 #define DHTTYPE DHT22
@@ -22,9 +27,6 @@ DHT dht(DHTPIN, DHTTYPE);
 
 //wifi client
 WiFiClient client;
-//byte lastClientStatus = WL_DISCONNECTED;
-//#define deepSleepTime 120000000 //2 minutes
-//#define wakeTime 120000 //2 minutes 
 
 // === wifi section
 void setupWifi() {
@@ -33,9 +35,10 @@ void setupWifi() {
     if (status == WL_DISCONNECTED || status == WL_CONNECTION_LOST) {
 
         //turnWifiInProgressLedState();
-
+        WiFi.config(ip, dns, gateway);
         WiFi.begin(ssid, password);
 
+        Serial.println();
         while (WiFi.status() == WL_DISCONNECTED) {
             delay(500);
             Serial.print(".");
@@ -108,9 +111,10 @@ void setup() {
 }
 
 void loop() {
-  //setup wifi
-  //in loop to re init connection if necessary
-  setupWifi();
+  unsigned long startTime = millis();
+
+  //delay before DHT measurements
+  delay(2000);
 
   // Reading temperature or humidity takes about 250 milliseconds!
   // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
@@ -122,7 +126,8 @@ void loop() {
   if (!isnan(h) && !isnan(t)) {
     // Compute heat index in Celsius (isFahreheit = false)
     float hic = dht.computeHeatIndex(t, h, false);
-  
+
+    Serial.println();
     Serial.print("Humidity: ");
     Serial.print(h);
     Serial.print(" %\t");
@@ -132,12 +137,27 @@ void loop() {
     Serial.print("Heat index: ");
     Serial.print(hic);
     Serial.print(" *C ");
-    
+
+    //setup wifi
+    //in loop to re init connection if necessary
+    setupWifi();
+
     postData(t, h, hic);    
   } else {
+    Serial.println();
     Serial.println("Failed to read from DHT sensor!");
   }
 
-     // Wait a few seconds between measurements.
-  delay(30000);
+  Serial.println("Total uptime: " + String(millis() - startTime));
+
+  // deep sleep between measurements.
+  // for lower power consumptions
+  Serial.println("Going to deep sleep for " + String(thingSpeakUpdateInterval / (1000 * 1000)) + " sec.");
+  //Need to connect GPIO16 to RST otherwise deep sleep will not work
+  ESP.deepSleep(thingSpeakUpdateInterval, WAKE_RF_DEFAULT);
 }
+
+
+
+
+
