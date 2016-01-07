@@ -2,11 +2,11 @@
 #include "DHT.h"
 
 //WiFi setup
-#define ssid       "nord"
-#define password   "asusn18urouter"
+#define ssid       "......."
+#define password   "......."
 
 //Thingspeak setup
-#define thingspeakApiKey "WCS2YMWLH97A4GOS"
+#define thingspeakApiKey "................"
 #define thingSpeakAddress "api.thingspeak.com"
 #define thingSpeakUpdateJsonEndpoint "/update.json"
 #define thingSpeakHttpPort 80
