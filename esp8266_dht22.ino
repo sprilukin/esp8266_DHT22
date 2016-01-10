@@ -23,7 +23,7 @@ String scannedWifiNetworks;
 
 //Thingspeak setup
 //will be replaced with values form EEPROM
-String thingspeakApiKey; //WCS2YMWLH97A4GOS
+String thingspeakApiKey;
 //Update data for the specific channel not frequently than once per 15 sec
 unsigned long thingSpeakUpdateInterval;
 #define thingSpeakAddress "api.thingspeak.com"
@@ -45,14 +45,13 @@ DHT dht(DHTPIN, DHTTYPE);
 WiFiClient client;
 //wifi server
 WiFiServer server(80);
-//DNS responder
-MDNSResponder mdns;
 
 //wifi connection status
 #define wifiConnectionNotConnected 0
 #define wifiConnectionOK 10
 #define wifiConnectionFailed 20
 #define wifiConnectionTimeout 30
+#define wifiConnectionAP 40
 byte wifiConnectionStatus = wifiConnectionNotConnected;
 
 
@@ -113,13 +112,13 @@ void readDataFromEEPROM() {
     Serial.println("SSID: " + ssid);
 
     password = readStringFromEEPROM(ssidSize, passSize);
-    Serial.print("PASS: " + password);
+    Serial.println("PASS: " + password);
 
     thingspeakApiKey = readStringFromEEPROM(ssidSize + passSize, apiKeySize);
-    Serial.print("API Key: " + thingspeakApiKey);
+    Serial.println("API Key: " + thingspeakApiKey);
 
     thingSpeakUpdateInterval = readLongFromEEPROM(ssidSize + passSize + apiKeySize);
-    Serial.print("Update interval: " + thingSpeakUpdateInterval);
+    Serial.println("Update interval: " + String(thingSpeakUpdateInterval));
 }
 
 void clearEEPROM() {
@@ -150,9 +149,13 @@ void writeDataToEEPROM(String ssid, String password, String apiKey, unsigned lon
 
 // === wifi section
 byte connectToAp() {
-    byte status = WiFi.status();
+    Serial.println();
 
-    if (status == WL_DISCONNECTED || status == WL_CONNECTION_LOST) {
+    byte status = WiFi.status();
+    Serial.println("Current connection status: " + String(status));
+
+    if (status != WL_CONNECTED) {
+        Serial.println("Going to connect to AP: " + ssid);
 
         WiFi.mode(WIFI_STA); //connect to other AP mode
         //WiFi.config(ip, dns, gateway);
@@ -177,8 +180,7 @@ byte connectToAp() {
             return wifiConnectionTimeout;
         } else {
             Serial.println();
-            Serial.println("WiFi connection failed");
-            Serial.println("Reason: " + String(WiFi.status()));
+            Serial.println("WiFi connection failed. Reason: " + String(WiFi.status()));
             return wifiConnectionFailed;
         }
     }
@@ -187,7 +189,6 @@ byte connectToAp() {
 }
 
 String getWiFiNetworks() {
-    WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     delay(100);
 
@@ -199,15 +200,15 @@ String getWiFiNetworks() {
     if (n > 0) {
         Serial.println(String(n) + " networks found");
 
-        st = "<ul>";
+        st = "<ul>\r\n";
         for (int i = 0; i < n; i++) {
             // Print SSID and RSSI for each network found
             st += "<li>" + String(i + 1) + ": " + WiFi.SSID(i) + " (" + WiFi.RSSI(i) + ")";
             st += (WiFi.encryptionType(i) == ENC_TYPE_NONE) ? " " : "*";
-            st += "</li>";
+            st += "</li>\r\n";
         }
 
-        st += "</ul>";
+        st += "\r\n</ul>";
     }
 
     Serial.println(st);
@@ -217,9 +218,12 @@ String getWiFiNetworks() {
 
 // == Web server stuff
 
+String getIPAsString(IPAddress ip) {
+    return String(ip[0]) + "." + String(ip[1]) + "." + String(ip[2]) + "." + String(ip[3]);
+}
+
 String getHome() {
-    IPAddress ip = WiFi.softAPIP();
-    String ipStr = String(ip[0]) + "." + String(ip[1]) + "." + String(ip[2]) + "." + String(ip[3]);
+    String ipStr = getIPAsString(WiFi.softAPIP());
     String response = "HTTP/1.1 200 OK\r\n";
     response += "Content-Type: text/html\r\n\r\n";
     response += "<!DOCTYPE HTML>\r\n";
@@ -284,9 +288,6 @@ String getBadRequest() {
 }
 
 void serveAsHttp() {
-    // Check for any mDNS queries and send responses
-    mdns.update();
-
     // Check if a client has connected
     WiFiClient client = server.available();
     if (!client) {
@@ -314,7 +315,7 @@ void serveAsHttp() {
     }
 
     String path = request.substring(addr_start + 1, addr_end);
-    Serial.print("Request path: " + path);
+    Serial.println("Request path: '" + path + "'");
 
     //stop receiving data from client
     client.flush();
@@ -336,24 +337,26 @@ void serveAsHttp() {
 }
 
 void launchWebServer() {
+    if (!MDNS.begin(dnsName)) {
+        Serial.println("Error setting up MDNS responder!");
 
-    //Start mDNS
-    if (!mdns.begin(dnsName, WiFi.softAPIP())) {
-        Serial.println("Error setting up mDNS responder!");
-        while(true) {
-            delay(1000);
+        while(1) {
+          delay(1000);
         }
     }
 
     Serial.println("mDNS responder started");
 
-    // Start the server
+    // Start TCP (HTTP) server
     server.begin();
-    Serial.println("Server started");
+    Serial.println("TCP server started");
+
+    // Add service to MDNS-SD
+    MDNS.addService("http", "tcp", 80);
 
     while(true) {
         serveAsHttp();
-        delay(0); //yield
+        delay(10); //yield
     }
 }
 
@@ -362,9 +365,10 @@ void setupAP() {
     scannedWifiNetworks = getWiFiNetworks();
     delay(100);
 
+    WiFi.mode(WIFI_AP);
     WiFi.softAP(String(apSSID).c_str());
     Serial.println("Connected in soft AP mode with ssid: " + String(apSSID));
-    Serial.println("IP: " + WiFi.softAPIP());
+    Serial.println("IP: " + getIPAsString(WiFi.softAPIP()));
 
     //Start HTTP server
     launchWebServer();
@@ -441,15 +445,23 @@ void setup() {
     readDataFromEEPROM();
 
     if (ssid.length() > 0) {
+        WiFi.disconnect();
         wifiConnectionStatus = connectToAp();
     }
 
     if (wifiConnectionStatus != wifiConnectionOK) {
+        wifiConnectionStatus = wifiConnectionAP;
         setupAP();
     }
 }
 
 void loop() {
+    if (wifiConnectionStatus == wifiConnectionAP) {
+        //System started in AP mode
+        //main loop should not be executed
+        return;
+    }
+
     while (connectToAp() != wifiConnectionOK) {
         Serial.println("Connection to Wi-Fi failed. Next attempt will be in " +
         String(wifiFailedAttempt / 1000) +
@@ -498,6 +510,3 @@ void loop() {
 
     delay(thingSpeakUpdateInterval);
 }
-
-
-
