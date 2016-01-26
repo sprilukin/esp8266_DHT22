@@ -1,0 +1,25 @@
+<project default="compile" basedir=".">
+
+    <target name="compile" description="compile the source">
+        <exec executable="platformio">
+            <arg value="run"/>
+        </exec>
+    </target>
+
+    <target name="clean" description="clean the source">
+        <exec executable="platformio">
+            <arg value="run"/>
+            <arg value="--target"/>
+            <arg value="clean"/>
+        </exec>
+    </target>
+
+    <target name="upload" description="upload binaries to the device" depends="compile">
+        <exec executable="platformio">
+            <arg value="run"/>
+            <arg value="--target"/>
+            <arg value="upload"/>
+        </exec>
+    </target>
+
+</project>
