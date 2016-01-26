@@ -16,6 +16,9 @@ char thingSpeakUpdateInterval[11] = "120"; //in seconds
 #define DHTPIN 13
 DHT dht(DHTPIN, DHTTYPE);
 
+//to read voltage
+ADC_MODE(ADC_VCC);
+
 //WiFi
 WiFiClient client;
 
@@ -49,7 +52,8 @@ boolean postData(float temperature, float humidity, float heatIndex) {
     String postString =
             "field1=" + String(temperature) +
             "&field2=" + String(humidity) +
-            "&field3=" + String(heatIndex);
+            "&field3=" + String(heatIndex) +
+            "&field4=" + String(ESP.getVcc() / 1000.0);
 
     client.println("POST " + String(thingSpeakUpdateJsonEndpoint) + " HTTP/1.1");
     client.println("Host: " + String(thingSpeakAddress));
@@ -98,13 +102,13 @@ void setup() {
   //sets timeout until configuration portal gets turned off
   //useful to make it all retry or go to sleep
   //in seconds
-  wifiManager.setTimeout(120);
+  wifiManager.setTimeout(240);
 
   if (!wifiManager.autoConnect("esp8266", "esp8266")) {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
-    ESP.deepSleep(20 * 1000 * 1000, WAKE_RF_DEFAULT);
+    ESP.deepSleep(10 * 60 * 1000 * 1000, WAKE_RF_DEFAULT);
   }
 
     //if you get here you have connected to the WiFi
