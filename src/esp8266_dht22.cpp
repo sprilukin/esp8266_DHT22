@@ -1,14 +1,17 @@
 #include <WiFiClient.h>
 #include <WiFiManager.h>
 #include "DHT.h"
+#include <EEPROM.h>
 
 //Thingspeak setup
-char thingspeakApiKey[17];
-char thingSpeakUpdateInterval[11] = "120"; //in seconds
+String thingspeakApiKey = "";
+unsigned int thingSpeakUpdateInterval = 120; //in seconds
 
 //Thingspeak connection settings
-#define thingSpeakAddress "api.thingspeak.com"
-#define thingSpeakUpdateJsonEndpoint "/update.json"
+//#define thingSpeakAddressUri "api.thingspeak.com"
+byte thingSpeakAddressIp[] = {184, 106, 153, 149};
+#define thingSpeakAddressIpAsString "184.106.153.149"
+#define thingSpeakUpdateJsonEndpoint "/update.json?headers=false"
 #define thingSpeakHttpPort 80
 
 //DHT22
@@ -22,6 +25,51 @@ ADC_MODE(ADC_VCC);
 //WiFi
 WiFiClient client;
 
+unsigned int timingsMeasurement = 0;
+
+//flag for saving data
+bool shouldSaveConfig = false;
+
+
+void readDataFromEEPROM() {
+ char apiKey[17];
+ byte address = 0;
+
+ for (byte i = 0; i < 16; i++) {
+    apiKey[i] = EEPROM.read(i);
+ }
+
+ apiKey[16] = '\0';
+
+ thingspeakApiKey = String(apiKey);
+
+ thingSpeakUpdateInterval = 0;
+
+ for (byte i = 16; i < 20; i++) {
+     thingSpeakUpdateInterval = thingSpeakUpdateInterval | (EEPROM.read(i) << (i - 16));
+ }
+}
+
+void writeDataToEEPROM() {
+ const char *apiKey = thingspeakApiKey.c_str();
+ byte address = 0;
+
+ for (byte i = 0; i < 16; i++) {
+     EEPROM.write(i, apiKey[i]);
+ }
+
+ for (byte i = 16; i < 20; i++) {
+     EEPROM.write(i, (thingSpeakUpdateInterval >> (i - 16)) & 255);
+ }
+
+ EEPROM.commit();
+}
+
+//callback notifying us of the need to save config
+void saveConfigCallback () {
+  Serial.println("Should save config");
+  shouldSaveConfig = true;
+}
 
 // == DHTxx section
 void printSensorData(float temperature, float humidity, float heatIndex) {
@@ -44,7 +92,7 @@ boolean postData(float temperature, float humidity, float heatIndex) {
         return false;
     }
 
-    if (!client.connect(thingSpeakAddress, thingSpeakHttpPort)) {
+    if (!client.connect(thingSpeakAddressIp, thingSpeakHttpPort)) {
         Serial.println("Can not send data - connection failed");
         return false;
     }
@@ -55,16 +103,26 @@ boolean postData(float temperature, float humidity, float heatIndex) {
             "&field3=" + String(heatIndex) +
             "&field4=" + String(ESP.getVcc() / 1000.0);
 
+    Serial.println("POST " + String(thingSpeakUpdateJsonEndpoint) + " HTTP/1.1");
     client.println("POST " + String(thingSpeakUpdateJsonEndpoint) + " HTTP/1.1");
-    client.println("Host: " + String(thingSpeakAddress));
+    Serial.println("Host: " + String(thingSpeakAddressIpAsString));
+    client.println("Host: " + String(thingSpeakAddressIpAsString));
+    Serial.println("Connection: close");
     client.println("Connection: close");
+    Serial.println("X-THINGSPEAKAPIKEY: " + String(thingspeakApiKey));
     client.println("X-THINGSPEAKAPIKEY: " + String(thingspeakApiKey));
+    Serial.println("Content-Type: application/x-www-form-urlencoded");
     client.println("Content-Type: application/x-www-form-urlencoded");
+    Serial.print("Content-Length: " + String(postString.length()));
     client.print("Content-Length: " + String(postString.length()));
+    Serial.print("\r\n\r\n");
     client.print("\r\n\r\n");
+    Serial.println(postString);
     client.print(postString);
 
     boolean result = false;
+
+    delay(500);
 
     // Read all the lines of the reply from server and print them to Serial
     while (client.available()) {
@@ -72,9 +130,10 @@ boolean postData(float temperature, float humidity, float heatIndex) {
         if (line.indexOf("Status: ") > -1) {
             if (line.indexOf("200 OK") > -1) {
                 result = true;
-                break;
+                //break;
             }
         }
+        Serial.print(line);
     }
 
     Serial.println("Result:" + String(result ? "Ok" : "Failed"));
@@ -84,14 +143,20 @@ boolean postData(float temperature, float humidity, float heatIndex) {
 
 // == generic setup and loop section
 void setup() {
-    Serial.begin(115200);
-    dht.begin();
+  Serial.begin(115200);
+  dht.begin();
+  EEPROM.begin(512);
+  timingsMeasurement = millis();
+
+  readDataFromEEPROM();
+  Serial.println("Api key from EEPROM: " + String(thingspeakApiKey));
+  Serial.println("Update interval from EEPROM: " + String(thingSpeakUpdateInterval));
 
   WiFiManager wifiManager;
 
   //Custom parameters
-  WiFiManagerParameter thingSpeakKey("key", "Thingspeak key", thingspeakApiKey, 17);
-  WiFiManagerParameter updateInterval("updateInterval", "Update interval", thingSpeakUpdateInterval, 11);
+  WiFiManagerParameter thingSpeakKey("key", "Thingspeak key", thingspeakApiKey.c_str(), 17);
+  WiFiManagerParameter updateInterval("updateInterval", "Update interval", String(thingSpeakUpdateInterval).c_str(), 12);
 
   wifiManager.addParameter(&thingSpeakKey);
   wifiManager.addParameter(&updateInterval);
@@ -104,6 +169,8 @@ void setup() {
   //in seconds
   wifiManager.setTimeout(240);
 
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+
   if (!wifiManager.autoConnect("esp8266", "esp8266")) {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
@@ -114,15 +181,25 @@ void setup() {
     //if you get here you have connected to the WiFi
     Serial.println("connected...yeey :)");
 
-  //read updated parameters
-  strcpy(thingspeakApiKey, thingSpeakKey.getValue());
-  strcpy(thingSpeakUpdateInterval, updateInterval.getValue());
+    //save the custom parameters to EEPROM
+    if (shouldSaveConfig) {
+      //read updated parameters
+      thingspeakApiKey = String(thingSpeakKey.getValue());
+      thingSpeakUpdateInterval = atol(String(updateInterval.getValue()).c_str());
+
+      writeDataToEEPROM();
+    }
+
+    EEPROM.end();
 }
 
 void loop() {
-    //delay before DHT measurements
-    //do not need this since connection to AP will take more than two seconds
-    //delay(2000);
+    //delay after initialization but before DHT measurements should be at least two seconds.
+    timingsMeasurement = millis() - timingsMeasurement;
+    Serial.println("Time to startup: " + String(timingsMeasurement) + " ms");
+    if (timingsMeasurement < 2000) {
+        delay(2000 - timingsMeasurement);
+    }
 
     // Reading temperature or humidity takes about 250 milliseconds!
     // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
@@ -143,9 +220,12 @@ void loop() {
         Serial.println("Failed to read from DHT sensor!");
     }
 
+    timingsMeasurement = millis() - timingsMeasurement;
+    Serial.println("Full loop time: " + String(timingsMeasurement) + " ms");
+
     // deep sleep between measurements.
     // for lower power consumptions
     //Serial.println("Going to deep sleep for " + String(thingSpeakUpdateInterval / (1000 * 1000)) + " sec.");
     //Need to connect GPIO16 to RST otherwise deep sleep will not work
-    ESP.deepSleep(atol(thingSpeakUpdateInterval) * 1000 * 1000, WAKE_RF_DEFAULT);
+    ESP.deepSleep(thingSpeakUpdateInterval * 1000 * 1000, WAKE_RF_DEFAULT);
 }
