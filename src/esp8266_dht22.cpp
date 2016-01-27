@@ -11,7 +11,7 @@ unsigned int thingSpeakUpdateInterval = 120; //in seconds
 //#define thingSpeakAddressUri "api.thingspeak.com"
 byte thingSpeakAddressIp[] = {184, 106, 153, 149};
 #define thingSpeakAddressIpAsString "184.106.153.149"
-#define thingSpeakUpdateJsonEndpoint "/update.json?headers=false"
+#define thingSpeakUpdateJsonEndpoint "/update.json"
 #define thingSpeakHttpPort 80
 
 //DHT22
@@ -103,6 +103,7 @@ boolean postData(float temperature, float humidity, float heatIndex) {
             "&field3=" + String(heatIndex) +
             "&field4=" + String(ESP.getVcc() / 1000.0);
 
+    Serial.println();
     Serial.println("POST " + String(thingSpeakUpdateJsonEndpoint) + " HTTP/1.1");
     client.println("POST " + String(thingSpeakUpdateJsonEndpoint) + " HTTP/1.1");
     Serial.println("Host: " + String(thingSpeakAddressIpAsString));
@@ -125,15 +126,13 @@ boolean postData(float temperature, float humidity, float heatIndex) {
     delay(500);
 
     // Read all the lines of the reply from server and print them to Serial
-    while (client.available()) {
-        String line = client.readStringUntil('\r');
+    while (client.available() && !result) {
+        String line = client.readStringUntil('\n');
         if (line.indexOf("Status: ") > -1) {
             if (line.indexOf("200 OK") > -1) {
                 result = true;
-                //break;
             }
         }
-        Serial.print(line);
     }
 
     Serial.println("Result:" + String(result ? "Ok" : "Failed"));
@@ -149,6 +148,8 @@ void setup() {
   timingsMeasurement = millis();
 
   readDataFromEEPROM();
+
+  Serial.println();
   Serial.println("Api key from EEPROM: " + String(thingspeakApiKey));
   Serial.println("Update interval from EEPROM: " + String(thingSpeakUpdateInterval));
 
